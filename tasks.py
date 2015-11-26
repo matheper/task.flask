@@ -4,27 +4,16 @@ from flask import jsonify
 from flask import make_response
 from flask import request
 from flask import url_for
-from flask.ext.httpauth import HTTPBasicAuth
+from flask.ext.cors import CORS
+from flask.ext.pymongo import PyMongo
+from flask.ext.pymongo import DESCENDING
 
 
 app = Flask(__name__)
+mongo = PyMongo(app)
+CORS(app)
 
-tasks = [
-    {
-        'id': 1,
-        'title': u'task1',
-        'description': u'something',
-        'done': False,
-    },
-    {
-        'id': 2,
-        'title': u'task2',
-        'description': u'something',
-        'done': False,
-    }
-]
-
-auth = HTTPBasicAuth()
+STATUS = ['todo', 'today', 'done']
 
 
 @app.route('/')
@@ -32,16 +21,26 @@ def get_title():
     return 'matheper'
 
 
-@app.route('/todo/api/v1.0/task/<int:task_id>', methods=['GET'])
+@app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['GET'])
 def get_task(task_id):
-    task = [task for task in tasks if task['id'] == task_id]
+    tasks_collection = mongo.db.get_collection('tasks')
+    task = tasks_collection.find_one({'id': task_id})
     if not len(task):
         abort(404)
-    return jsonify({'task': make_public_task(task[0])})
+    return jsonify({'task': make_public_task(task)})
 
 
 @app.route('/todo/api/v1.0/tasks', methods=['GET'])
 def get_tasks():
+    tasks_collection = mongo.db.get_collection('tasks')
+    tasks = tasks_collection.find().sort("id", DESCENDING)
+    return jsonify({'tasks': [make_public_task(task) for task in tasks]})
+
+
+@app.route('/todo/api/v1.0/tasks/<status>', methods=['GET'])
+def get_tasks_by_status(status):
+    tasks_collection = mongo.db.get_collection('tasks')
+    tasks = tasks_collection.find({'status': status}).sort("id", DESCENDING)
     return jsonify({'tasks': [make_public_task(task) for task in tasks]})
 
 
@@ -49,19 +48,24 @@ def get_tasks():
 def create_task():
     if not request.json or 'title' not in request.json:
         abort(400)
+    tasks_collection = mongo.db.get_collection('tasks')
+    index = 1
+    for last in tasks_collection.find().sort("id", DESCENDING).limit(1):
+        index = last.get('id') + 1
     task = {
-        'id': tasks[-1]['id'] + 1,
+        'id': index,
         'title': request.json['title'],
         'description': request.json.get('description', ""),
-        'done': False
+        'status': STATUS[0],
     }
-    tasks.append(task)
+    tasks_collection.insert_one(task)
     return jsonify({'task': make_public_task(task)}), 201
 
 
 @app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['PUT'])
 def update_task(task_id):
-    task = [task for task in tasks if task['id'] == task_id]
+    tasks_collection = mongo.db.get_collection('tasks')
+    task = tasks_collection.find_one({'id': task_id})
     if not len(task):
         abort(404)
     if not request.json:
@@ -72,24 +76,24 @@ def update_task(task_id):
     if 'description' in request.json and \
        type(request.json['description']) is not unicode:
             abort(400)
-    if 'done' in request.json and \
-       type(request.json['done']) is not bool:
+    if 'status' in request.json and \
+       type(request.json['status']) is not unicode:
             abort(400)
-    task[0]['title'] = request.json.get('title', task[0]['title'])
-    task[0]['description'] = request.json.get(
-        'description', task[0]['description']
+    task['title'] = request.json.get('title', task['title'])
+    task['description'] = request.json.get(
+        'description', task['description']
     )
-    task[0]['done'] = request.json.get('done', task[0]['done'])
-    return jsonify({'task': make_public_task(task[0])})
+    task['status'] = request.json.get('status', task['status'])
+    tasks_collection.replace_one({'id': task['id']}, task)
+    return jsonify({'task': make_public_task(task)})
 
 
 @app.route('/todo/api/v1.0/tasks/<int:task_id>', methods=['DELETE'])
-@auth.login_required
 def delete_task(task_id):
-    task = [task for task in tasks if task['id'] == task_id]
-    if len(task) == 0:
+    tasks_collection = mongo.db.get_collection('tasks')
+    task = tasks_collection.delete_one({'id': task_id})
+    if not task.deleted_count:
         abort(404)
-    tasks.remove(task[0])
     return jsonify({'result': True})
 
 
@@ -107,21 +111,11 @@ def make_public_task(task):
                 task_id=task['id'],
                 _external=True
             )
+        elif field == '_id':
+            pass
         else:
             new_task[field] = task[field]
     return new_task
-
-
-@auth.get_password
-def get_password(username):
-    if username == 'matheper':
-        return 'python'
-    return None
-
-
-@auth.error_handler
-def unauthorized():
-    return make_response(jsonify({'error': 'Unauthorized access'}), 403)
 
 
 if __name__ == '__main__':
