@@ -48,6 +48,8 @@ def get_tasks_by_status(status):
 def create_task():
     if not request.json or 'title' not in request.json:
         abort(400)
+    if 'status' in request.json and request.json['status'] not in STATUS:
+            abort(400)
     tasks_collection = mongo.db.get_collection('tasks')
     index = 1
     for last in tasks_collection.find().sort("id", DESCENDING).limit(1):
@@ -56,8 +58,9 @@ def create_task():
         'id': index,
         'title': request.json['title'],
         'description': request.json.get('description', ""),
-        'status': STATUS[0],
+        'status': request.json.get('status', STATUS[0]),
     }
+    print task
     tasks_collection.insert_one(task)
     return jsonify({'task': make_public_task(task)}), 201
 
@@ -70,14 +73,12 @@ def update_task(task_id):
         abort(404)
     if not request.json:
         abort(400)
-    if 'title' in request.json and \
-       type(request.json['title']) != unicode:
+    if 'title' in request.json and type(request.json['title']) != unicode:
             abort(400)
     if 'description' in request.json and \
        type(request.json['description']) is not unicode:
             abort(400)
-    if 'status' in request.json and \
-       type(request.json['status']) is not unicode:
+    if 'status' in request.json and request.json['status'] not in STATUS:
             abort(400)
     task['title'] = request.json.get('title', task['title'])
     task['description'] = request.json.get(
